@@ -13,7 +13,6 @@ uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 
 chart_types = ["Bar Chart", "Line Chart", "Area Chart", "Histogram", "Box Plot", "Scatter"]
 user_selections = []
-excel_ready = False
 buffer = None
 
 def clean_data(df):
@@ -119,4 +118,29 @@ if uploaded_file:
                     if chart_type == "Bar Chart":
                         sns.barplot(x=x_col, y=y_col, data=df, ax=ax)
                     elif chart_type == "Line Chart":
-                        sns.lineplot(
+                        sns.lineplot(x=x_col, y=y_col, data=df, ax=ax)
+                    elif chart_type == "Area Chart":
+                        df.plot.area(x=x_col, y=y_col, ax=ax)
+                    elif chart_type == "Histogram":
+                        df[y_col].plot.hist(ax=ax, bins=20)
+                    elif chart_type == "Box Plot":
+                        sns.boxplot(y=df[y_col], ax=ax)
+                    elif chart_type == "Scatter":
+                        sns.scatterplot(x=x_col, y=y_col, data=df, ax=ax)
+                    plt.xticks(rotation=45)
+                    st.pyplot(fig)
+                except Exception as e:
+                    st.warning(f"Chart preview failed: {e}")
+            else:
+                st.info("No numeric column found. Skipping chart options.")
+                user_selections.append(None)
+
+        st.markdown("---")
+        if st.button("📥 Generate Excel with Charts"):
+            buffer = create_excel_with_charts(all_tables, user_selections)
+
+    else:
+        st.warning("⚠️ No tables found in PDF.")
+
+    if buffer:
+        st.download_button("📥 Download Excel", buffer, file_name="converted_with_charts.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
