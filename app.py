@@ -6,14 +6,15 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from xlsxwriter.utility import xl_rowcol_to_cell
 
-st.set_page_config(page_title="Smart PDF to Excel with Charts", layout="wide")
+st.set_page_config(page_title="PDF to Excel with Charts", layout="wide")
 st.title("📄 PDF to Excel Converter with Embedded Charts")
 
 uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 
 chart_types = ["Bar Chart", "Line Chart", "Area Chart", "Histogram", "Box Plot", "Scatter"]
-
 user_selections = []
+excel_ready = False
+buffer = None
 
 def clean_data(df):
     for col in df.columns:
@@ -24,7 +25,6 @@ def create_excel_with_charts(tables, selections):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
-
         for idx, df in enumerate(tables):
             sheet_name = f'Table{idx + 1}'
             df.to_excel(writer, sheet_name=sheet_name, index=False)
@@ -38,7 +38,6 @@ def create_excel_with_charts(tables, selections):
             x_col = selection["x_col"]
             y_col = selection["y_col"]
 
-            # Skip if columns invalid
             if x_col not in df.columns or y_col not in df.columns:
                 continue
 
@@ -50,7 +49,7 @@ def create_excel_with_charts(tables, selections):
             }
 
             if chart_type not in chart_map:
-                continue  # Skip unsupported chart types
+                continue
 
             chart = workbook.add_chart({'type': chart_map[chart_type]})
             max_row = len(df)
@@ -91,16 +90,16 @@ if uploaded_file:
 
             if numeric_cols:
                 chart_type = st.selectbox(
-                    f"📈 Select chart type for Table {idx + 1}:", chart_types, key=f"chart_{idx}"
+                    f"📈 Chart type for Table {idx + 1}:", chart_types, key=f"chart_{idx}"
                 )
                 y_col = st.selectbox(
-                    f"🧮 Select Y-axis (numeric):", numeric_cols, key=f"ycol_{idx}"
+                    f"🧮 Y-axis (numeric):", numeric_cols, key=f"ycol_{idx}"
                 )
 
                 x_col = 'Index'
                 if categorical_cols:
                     x_col = st.selectbox(
-                        f"🏷️ Select X-axis:", categorical_cols + ['Index'], key=f"xcol_{idx}"
+                        f"🏷️ X-axis:", categorical_cols + ['Index'], key=f"xcol_{idx}"
                     )
                     if x_col == 'Index':
                         df['Index'] = df.index
@@ -114,30 +113,10 @@ if uploaded_file:
                     "y_col": y_col
                 })
 
-                # Preview Chart
                 st.subheader(f"Preview: {chart_type}")
                 fig, ax = plt.subplots()
                 try:
                     if chart_type == "Bar Chart":
                         sns.barplot(x=x_col, y=y_col, data=df, ax=ax)
                     elif chart_type == "Line Chart":
-                        sns.lineplot(x=x_col, y=y_col, data=df, ax=ax)
-                    elif chart_type == "Area Chart":
-                        df.plot.area(x=x_col, y=y_col, ax=ax)
-                    elif chart_type == "Histogram":
-                        df[y_col].plot.hist(ax=ax, bins=20)
-                    elif chart_type == "Box Plot":
-                        sns.boxplot(y=df[y_col], ax=ax)
-                    elif chart_type == "Scatter":
-                        sns.scatterplot(x=x_col, y=y_col, data=df, ax=ax)
-                    plt.xticks(rotation=45)
-                    st.pyplot(fig)
-                except Exception as e:
-                    st.warning(f"Chart preview failed: {e}")
-
-            else:
-                st.info("No numeric column found. Skipping chart options.")
-                user_selections.append(None)
-
-        # Save Excel file with charts
-        st.markdown("---")
+                        sns.lineplot(
