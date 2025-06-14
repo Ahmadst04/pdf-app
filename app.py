@@ -7,7 +7,7 @@ import seaborn as sns
 from xlsxwriter.utility import xl_rowcol_to_cell
 
 st.set_page_config(page_title="PDF to Excel with Charts", layout="wide")
-st.title("📄 PDF to Excel Converter with Embedded Charts")
+st.title("📄 PDF to Excel Smart Converter")
 
 uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 
