@@ -3,7 +3,9 @@ pdfplumber
 pandas
 matplotlib
 seaborn
-xlsxwriter
 pytesseract
 pdf2image
-pillow
+Pillow
+opencv-python-headless
+numpy
+xlsxwriter
