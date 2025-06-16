@@ -1,41 +1,41 @@
 import streamlit as st
-import pdfplumber
 import pandas as pd
+import pytesseract
+from pdf2image import convert_from_bytes
 import io
+import cv2
+import numpy as np
+from PIL import Image
 from collections import defaultdict
 
-st.set_page_config(page_title="PDF Table Extractor", layout="wide")
-st.title("📄 PDF to Excel Converter (Precise Layout Handling)")
+st.set_page_config(page_title="PDF OCR Table Extractor", layout="wide")
+st.title("📸 Image-based PDF to Excel Converter (with OCR)")
 
-uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
+uploaded_file = st.file_uploader("Upload a scanned or layout-tricky PDF", type="pdf")
 buffer = None
 
-def extract_table_by_position(pdf):
-    tables = []
-    for page in pdf.pages:
-        chars = page.chars  # individual characters
-        if not chars:
-            continue
+def preprocess_image(pil_image):
+    """Convert PIL image to OpenCV, grayscale, threshold."""
+    img = np.array(pil_image)
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return thresh
 
-        # Step 1: Group characters into rows
-        rows = defaultdict(list)
-        for char in chars:
-            row_key = round(char['top'], 1)  # adjust tolerance here
-            rows[row_key].append(char)
+def ocr_image_to_table(image):
+    custom_config = r'--psm 6'  # Assume uniform block of text
+    data = pytesseract.image_to_data(image, config=custom_config, output_type=pytesseract.Output.DATAFRAME)
+    data = data.dropna().query('text.str.strip() != ""', engine='python')
 
-        # Step 2: Sort and cluster by x-position to approximate columns
-        structured_rows = []
-        for top in sorted(rows.keys()):
-            line = sorted(rows[top], key=lambda c: c['x0'])
-            line_text = [c['text'] for c in line]
-            joined = "".join(line_text)
-            words = joined.split()
-            structured_rows.append(words)
+    # Group by line number
+    grouped = data.groupby(['page_num', 'block_num', 'par_num', 'line_num'])
 
-        df = pd.DataFrame(structured_rows)
-        tables.append(df)
+    rows = []
+    for _, group in grouped:
+        line = group.sort_values('left')['text'].tolist()
+        rows.append(line)
 
-    return tables
+    df = pd.DataFrame(rows)
+    return df
 
 def create_excel_file(tables):
     output = io.BytesIO()
@@ -47,19 +47,25 @@ def create_excel_file(tables):
 
 if uploaded_file:
     file_bytes = uploaded_file.read()
-    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        all_tables = extract_table_by_position(pdf)
+    images = convert_from_bytes(file_bytes, dpi=300)
+    all_tables = []
+
+    for page_num, img in enumerate(images):
+        st.markdown(f"---\n### 🖼 Page {page_num + 1}")
+        st.image(img, caption=f"Page {page_num + 1}", use_column_width=True)
+        processed = preprocess_image(img)
+        df = ocr_image_to_table(processed)
+        if not df.empty:
+            all_tables.append(df)
+            st.dataframe(df)
+        else:
+            st.warning("⚠️ No text detected on this page.")
 
     if all_tables:
-        st.success(f"✅ Extracted {len(all_tables)} table(s) from PDF.")
-        for idx, df in enumerate(all_tables):
-            st.markdown(f"---\n### 📑 Table {idx + 1}")
-            st.dataframe(df)
-
-        if st.button("📥 Download Excel"):
+        if st.button("📥 Download as Excel"):
             buffer = create_excel_file(all_tables)
     else:
-        st.error("❌ No usable table-like structures found.")
+        st.error("❌ No usable tables extracted via OCR.")
 
     if buffer:
-        st.download_button("📥 Download Excel", buffer, file_name="tables_from_pdf.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("📥 Download Excel", buffer, file_name="ocr_tables.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
