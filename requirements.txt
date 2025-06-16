@@ -1,8 +1,6 @@
 streamlit
 pdfplumber
 pandas
-matplotlib
-seaborn
 pytesseract
 pdf2image
 Pillow
