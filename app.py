@@ -15,7 +15,7 @@ user_selections = []
 
 def clean_data(df):
     for col in df.columns:
-        df[col] = df[col].replace(r'[^\d.-]', '', regex=True)  # remove non-numeric chars
+        df[col] = df[col].replace(r'[^\d.-]', '', regex=True)
         df[col] = pd.to_numeric(df[col], errors='ignore')
     return df
 
@@ -44,19 +44,21 @@ def text_to_table(text):
     if len(lines) < 2:
         return None
 
-    header = lines[0].split()
-    data_lines = lines[1:]
+    headers = lines[0].split()
     data = []
 
-    for line in data_lines:
+    for line in lines[1:]:
         row = line.split()
-        if len(row) == len(header):
-            data.append(row)
+        if len(row) < len(headers):
+            row += [''] * (len(headers) - len(row))
+        elif len(row) > len(headers):
+            row = row[:len(headers)]
+        data.append(row)
 
-    if len(data) == 0:
+    if not data:
         return None
 
-    return pd.DataFrame(data, columns=header)
+    return pd.DataFrame(data, columns=headers)
 
 def create_excel_with_charts(tables, selections):
     output = io.BytesIO()
@@ -109,7 +111,10 @@ if uploaded_file:
     with pdfplumber.open(uploaded_file) as pdf:
         all_tables = []
         raw_text_tables = []
-        for page in pdf.pages:
+
+        has_text = False  # flag to check if any text was extracted
+
+        for i, page in enumerate(pdf.pages):
             table = page.extract_table()
             if table:
                 df = pd.DataFrame(table[1:], columns=table[0])
@@ -118,6 +123,8 @@ if uploaded_file:
             else:
                 text = page.extract_text()
                 if text:
+                    has_text = True
+                    st.text(f"[Page {i+1}] Extracted Text:\n{text[:1000]}")  # Debug preview
                     df_text = text_to_table(text)
                     if df_text is not None:
                         df_text = clean_data(df_text)
@@ -176,6 +183,14 @@ if uploaded_file:
 
     else:
         st.warning("⚠️ No structured tables or parsable text found in the PDF.")
+
+        # Show raw text if nothing was parsed
+        with pdfplumber.open(uploaded_file) as pdf:
+            full_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+            if not full_text.strip():
+                st.error("❌ This PDF appears to be scanned or image-based. No extractable text found.")
+            else:
+                st.text_area("🔍 Raw PDF Text (for debugging)", full_text[:3000])
 
     if buffer:
         st.download_button("📥 Download Excel", buffer, file_name="converted_with_charts.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
