@@ -6,19 +6,39 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from xlsxwriter.utility import xl_rowcol_to_cell
 
-st.set_page_config(page_title="PDF to Excel with Charts", layout="wide")
-st.title("📄 PDF to Excel Smart Converter")
+st.set_page_config(page_title="PDF to Excel with Smart Charts", layout="wide")
+st.title("📄 PDF to Excel Converter with AI Chart Suggestion")
 
 uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
-
-chart_types = ["Bar Chart", "Line Chart", "Area Chart", "Histogram", "Box Plot", "Scatter"]
-user_selections = []
 buffer = None
+user_selections = []
 
 def clean_data(df):
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors='ignore')
     return df
+
+def recommend_chart(df):
+    numeric = df.select_dtypes('number').columns.tolist()
+    categorical = df.select_dtypes('object').columns.tolist()
+    if len(numeric) >= 2:
+        return "Scatter", numeric[0], numeric[1]
+    elif len(numeric) >= 1 and len(categorical) >= 1:
+        return "Bar Chart", categorical[0], numeric[0]
+    elif len(numeric) >= 1:
+        return "Histogram", 'Index', numeric[0]
+    else:
+        return None, None, None
+
+def text_to_table(text):
+    lines = text.split("\n")
+    lines = [line.strip() for line in lines if line.strip()]
+    if len(lines) < 2:
+        return None
+    rows = [line.split() for line in lines]
+    headers = rows[0]
+    data = rows[1:]
+    return pd.DataFrame(data, columns=headers)
 
 def create_excel_with_charts(tables, selections):
     output = io.BytesIO()
@@ -70,15 +90,25 @@ def create_excel_with_charts(tables, selections):
 if uploaded_file:
     with pdfplumber.open(uploaded_file) as pdf:
         all_tables = []
+        raw_text_tables = []
         for i, page in enumerate(pdf.pages):
             table = page.extract_table()
             if table:
                 df = pd.DataFrame(table[1:], columns=table[0])
                 df = clean_data(df)
                 all_tables.append(df)
+            else:
+                text = page.extract_text()
+                if text:
+                    df_text = text_to_table(text)
+                    if df_text is not None:
+                        df_text = clean_data(df_text)
+                        raw_text_tables.append(df_text)
+
+        all_tables.extend(raw_text_tables)
 
     if all_tables:
-        st.success(f"✅ Found {len(all_tables)} table(s)")
+        st.success(f"✅ Found {len(all_tables)} usable data tables")
 
         for idx, df in enumerate(all_tables):
             st.markdown(f"---\n### 📑 Table {idx + 1}")
@@ -87,60 +117,45 @@ if uploaded_file:
             numeric_cols = df.select_dtypes(include='number').columns.tolist()
             categorical_cols = df.select_dtypes(include='object').columns.tolist()
 
-            if numeric_cols:
-                chart_type = st.selectbox(
-                    f"📈 Chart type for Table {idx + 1}:", chart_types, key=f"chart_{idx}"
-                )
-                y_col = st.selectbox(
-                    f"🧮 Y-axis (numeric):", numeric_cols, key=f"ycol_{idx}"
-                )
+            df['Index'] = df.index  # fallback
 
-                x_col = 'Index'
-                if categorical_cols:
-                    x_col = st.selectbox(
-                        f"🏷️ X-axis:", categorical_cols + ['Index'], key=f"xcol_{idx}"
-                    )
-                    if x_col == 'Index':
-                        df['Index'] = df.index
-                else:
-                    df['Index'] = df.index
-                    x_col = 'Index'
+            auto_chart, x_col, y_col = recommend_chart(df)
+            if auto_chart:
+                st.info(f"📊 Recommended: {auto_chart} for Table {idx + 1}")
+
+                try:
+                    st.subheader(f"Preview: {auto_chart}")
+                    fig, ax = plt.subplots()
+                    if auto_chart == "Bar Chart":
+                        sns.barplot(x=x_col, y=y_col, data=df, ax=ax)
+                    elif auto_chart == "Line Chart":
+                        sns.lineplot(x=x_col, y=y_col, data=df, ax=ax)
+                    elif auto_chart == "Area Chart":
+                        df.plot.area(x=x_col, y=y_col, ax=ax)
+                    elif auto_chart == "Histogram":
+                        df[y_col].plot.hist(ax=ax, bins=20)
+                    elif auto_chart == "Box Plot":
+                        sns.boxplot(y=df[y_col], ax=ax)
+                    elif auto_chart == "Scatter":
+                        sns.scatterplot(x=x_col, y=y_col, data=df, ax=ax)
+                    st.pyplot(fig)
+                except Exception as e:
+                    st.warning(f"⚠️ Chart preview failed: {e}")
 
                 user_selections.append({
-                    "chart_type": chart_type,
+                    "chart_type": auto_chart,
                     "x_col": x_col,
                     "y_col": y_col
                 })
-
-                st.subheader(f"Preview: {chart_type}")
-                fig, ax = plt.subplots()
-                try:
-                    if chart_type == "Bar Chart":
-                        sns.barplot(x=x_col, y=y_col, data=df, ax=ax)
-                    elif chart_type == "Line Chart":
-                        sns.lineplot(x=x_col, y=y_col, data=df, ax=ax)
-                    elif chart_type == "Area Chart":
-                        df.plot.area(x=x_col, y=y_col, ax=ax)
-                    elif chart_type == "Histogram":
-                        df[y_col].plot.hist(ax=ax, bins=20)
-                    elif chart_type == "Box Plot":
-                        sns.boxplot(y=df[y_col], ax=ax)
-                    elif chart_type == "Scatter":
-                        sns.scatterplot(x=x_col, y=y_col, data=df, ax=ax)
-                    plt.xticks(rotation=45)
-                    st.pyplot(fig)
-                except Exception as e:
-                    st.warning(f"Chart preview failed: {e}")
             else:
-                st.info("No numeric column found. Skipping chart options.")
+                st.warning("⚠️ No numeric data to generate chart.")
                 user_selections.append(None)
 
-        st.markdown("---")
         if st.button("📥 Generate Excel with Charts"):
             buffer = create_excel_with_charts(all_tables, user_selections)
 
     else:
-        st.warning("⚠️ No tables found in PDF.")
+        st.warning("⚠️ No structured tables or parsable text found in the PDF.")
 
     if buffer:
         st.download_button("📥 Download Excel", buffer, file_name="converted_with_charts.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
