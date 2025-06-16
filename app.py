@@ -4,10 +4,13 @@ import pandas as pd
 import io
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pytesseract
+from pdf2image import convert_from_bytes
+from PIL import Image
 from xlsxwriter.utility import xl_rowcol_to_cell
 
 st.set_page_config(page_title="PDF to Excel with Smart Charts", layout="wide")
-st.title("📄 PDF to Excel Converter with AI Chart Suggestion")
+st.title("📄 PDF to Excel Converter with AI Chart Suggestion + OCR")
 
 uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 buffer = None
@@ -107,13 +110,22 @@ def create_excel_with_charts(tables, selections):
     output.seek(0)
     return output
 
+def extract_text_with_ocr(file_bytes):
+    images = convert_from_bytes(file_bytes)
+    extracted = []
+    for img in images:
+        text = pytesseract.image_to_string(img)
+        extracted.append(text)
+    return extracted
+
 if uploaded_file:
-    with pdfplumber.open(uploaded_file) as pdf:
-        all_tables = []
-        raw_text_tables = []
+    file_bytes = uploaded_file.read()
+    all_tables = []
+    raw_text_tables = []
 
-        has_text = False  # flag to check if any text was extracted
-
+    # Step 1: Try pdfplumber text/tables
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        has_text = False
         for i, page in enumerate(pdf.pages):
             table = page.extract_table()
             if table:
@@ -124,18 +136,29 @@ if uploaded_file:
                 text = page.extract_text()
                 if text:
                     has_text = True
-                    st.text(f"[Page {i+1}] Extracted Text:\n{text[:1000]}")  # Debug preview
                     df_text = text_to_table(text)
                     if df_text is not None:
                         df_text = clean_data(df_text)
                         raw_text_tables.append(df_text)
 
-        all_tables.extend(raw_text_tables)
+    all_tables.extend(raw_text_tables)
 
+    # Step 2: Fallback to OCR if no usable tables
+    if not all_tables:
+        st.warning("⚠️ No tables or text found. Trying OCR (scanned document fallback)...")
+        ocr_text_pages = extract_text_with_ocr(file_bytes)
+
+        for text in ocr_text_pages:
+            df = text_to_table(text)
+            if df is not None:
+                df = clean_data(df)
+                all_tables.append(df)
+
+    # Step 3: Display results
     if all_tables:
         table_scores = [score_table(df) for df in all_tables]
         best_table_idx = table_scores.index(max(table_scores))
-        st.success(f"✅ Found {len(all_tables)} usable data tables. Best table: Table {best_table_idx + 1}")
+        st.success(f"✅ Found {len(all_tables)} usable tables. Best table: Table {best_table_idx + 1}")
 
         for idx, df in enumerate(all_tables):
             st.markdown(f"---\n### 📑 Table {idx + 1}" + (" ✅ **Best Table**" if idx == best_table_idx else ""))
@@ -182,15 +205,7 @@ if uploaded_file:
             buffer = create_excel_with_charts(all_tables, user_selections)
 
     else:
-        st.warning("⚠️ No structured tables or parsable text found in the PDF.")
-
-        # Show raw text if nothing was parsed
-        with pdfplumber.open(uploaded_file) as pdf:
-            full_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
-            if not full_text.strip():
-                st.error("❌ This PDF appears to be scanned or image-based. No extractable text found.")
-            else:
-                st.text_area("🔍 Raw PDF Text (for debugging)", full_text[:3000])
+        st.error("❌ No usable data found even after OCR.")
 
     if buffer:
         st.download_button("📥 Download Excel", buffer, file_name="converted_with_charts.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
