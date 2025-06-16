@@ -6,7 +6,7 @@ from pdf2image import convert_from_bytes
 import pandas as pd
 
 st.set_page_config(page_title="PDF to Excel - Raw Text Export", layout="wide")
-st.title("📄 PDF to Excel Converter - Raw Text Export with OCR Fallback")
+st.title("📄 PDF to Excel Converter - Raw Text Export with OCR Fallback")1
 
 uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 buffer = None
