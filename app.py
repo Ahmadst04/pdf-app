@@ -1,47 +1,40 @@
 import streamlit as st
+import pdfplumber
 import pandas as pd
 import io
-import fitz  # PyMuPDF
 from collections import defaultdict
 
-st.set_page_config(page_title="PDF Table Extractor with PyMuPDF", layout="wide")
-st.title("📄 PDF to Excel Converter (via PyMuPDF)")
+st.set_page_config(page_title="PDF Table Extractor", layout="wide")
+st.title("📄 PDF to Excel Converter (Precise Layout Handling)")
 
 uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 buffer = None
 
-def group_blocks_to_rows(blocks, row_tolerance=5):
-    """Group text blocks by approximate Y coordinate."""
-    rows = defaultdict(list)
-    for block in blocks:
-        y = round(block["top"] / row_tolerance) * row_tolerance
-        rows[y].append((block["x0"], block["text"]))
-    return rows
-
-def extract_table_from_pymupdf(doc):
+def extract_table_by_position(pdf):
     tables = []
-    for page in doc:
-        words = page.get_text("dict")["blocks"]
-        text_blocks = []
-        for block in words:
-            if "lines" in block:
-                for line in block["lines"]:
-                    for span in line["spans"]:
-                        text_blocks.append({
-                            "text": span["text"],
-                            "x0": span["bbox"][0],
-                            "top": span["bbox"][1]
-                        })
-        if not text_blocks:
+    for page in pdf.pages:
+        chars = page.chars  # individual characters
+        if not chars:
             continue
-        rows = group_blocks_to_rows(text_blocks)
+
+        # Step 1: Group characters into rows
+        rows = defaultdict(list)
+        for char in chars:
+            row_key = round(char['top'], 1)  # adjust tolerance here
+            rows[row_key].append(char)
+
+        # Step 2: Sort and cluster by x-position to approximate columns
         structured_rows = []
-        for y in sorted(rows.keys()):
-            row = [text for _, text in sorted(rows[y])]
-            structured_rows.append(row)
-        if structured_rows:
-            df = pd.DataFrame(structured_rows)
-            tables.append(df)
+        for top in sorted(rows.keys()):
+            line = sorted(rows[top], key=lambda c: c['x0'])
+            line_text = [c['text'] for c in line]
+            joined = "".join(line_text)
+            words = joined.split()
+            structured_rows.append(words)
+
+        df = pd.DataFrame(structured_rows)
+        tables.append(df)
+
     return tables
 
 def create_excel_file(tables):
@@ -54,11 +47,11 @@ def create_excel_file(tables):
 
 if uploaded_file:
     file_bytes = uploaded_file.read()
-    doc = fitz.open(stream=file_bytes, filetype="pdf")
-    all_tables = extract_table_from_pymupdf(doc)
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        all_tables = extract_table_by_position(pdf)
 
     if all_tables:
-        st.success(f"✅ Extracted {len(all_tables)} table(s).")
+        st.success(f"✅ Extracted {len(all_tables)} table(s) from PDF.")
         for idx, df in enumerate(all_tables):
             st.markdown(f"---\n### 📑 Table {idx + 1}")
             st.dataframe(df)
@@ -66,7 +59,7 @@ if uploaded_file:
         if st.button("📥 Download Excel"):
             buffer = create_excel_file(all_tables)
     else:
-        st.error("❌ No table-like text detected.")
+        st.error("❌ No usable table-like structures found.")
 
     if buffer:
         st.download_button("📥 Download Excel", buffer, file_name="tables_from_pdf.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
