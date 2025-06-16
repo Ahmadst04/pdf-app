@@ -5,7 +5,7 @@ import io
 from collections import defaultdict
 
 st.set_page_config(page_title="PDF Table Extractor", layout="wide")
-st.title("📄 PDF to Excel Converter")2
+st.title("📄 PDF to Excel Converter")
 
 uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 buffer = None
