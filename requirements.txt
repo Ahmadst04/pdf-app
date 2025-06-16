@@ -1,6 +1,9 @@
 streamlit
 pdfplumber
 pandas
-xlsxwriter
 matplotlib
 seaborn
+xlsxwriter
+pytesseract
+pdf2image
+pillow
