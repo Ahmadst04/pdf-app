@@ -15,8 +15,16 @@ user_selections = []
 
 def clean_data(df):
     for col in df.columns:
+        df[col] = df[col].replace(r'[^\d.-]', '', regex=True)  # remove non-numeric chars
         df[col] = pd.to_numeric(df[col], errors='ignore')
     return df
+
+def score_table(df):
+    numeric_cols = df.select_dtypes(include='number').shape[1]
+    row_count = len(df)
+    col_names = df.columns
+    meaningful_names = sum(1 for name in col_names if len(name.strip()) > 2 and not name.lower().startswith("unnamed"))
+    return numeric_cols * 2 + row_count + meaningful_names
 
 def recommend_chart(df):
     numeric = df.select_dtypes('number').columns.tolist()
@@ -35,10 +43,20 @@ def text_to_table(text):
     lines = [line.strip() for line in lines if line.strip()]
     if len(lines) < 2:
         return None
-    rows = [line.split() for line in lines]
-    headers = rows[0]
-    data = rows[1:]
-    return pd.DataFrame(data, columns=headers)
+
+    header = lines[0].split()
+    data_lines = lines[1:]
+    data = []
+
+    for line in data_lines:
+        row = line.split()
+        if len(row) == len(header):
+            data.append(row)
+
+    if len(data) == 0:
+        return None
+
+    return pd.DataFrame(data, columns=header)
 
 def create_excel_with_charts(tables, selections):
     output = io.BytesIO()
@@ -91,7 +109,7 @@ if uploaded_file:
     with pdfplumber.open(uploaded_file) as pdf:
         all_tables = []
         raw_text_tables = []
-        for i, page in enumerate(pdf.pages):
+        for page in pdf.pages:
             table = page.extract_table()
             if table:
                 df = pd.DataFrame(table[1:], columns=table[0])
@@ -108,21 +126,23 @@ if uploaded_file:
         all_tables.extend(raw_text_tables)
 
     if all_tables:
-        st.success(f"✅ Found {len(all_tables)} usable data tables")
+        table_scores = [score_table(df) for df in all_tables]
+        best_table_idx = table_scores.index(max(table_scores))
+        st.success(f"✅ Found {len(all_tables)} usable data tables. Best table: Table {best_table_idx + 1}")
 
         for idx, df in enumerate(all_tables):
-            st.markdown(f"---\n### 📑 Table {idx + 1}")
+            st.markdown(f"---\n### 📑 Table {idx + 1}" + (" ✅ **Best Table**" if idx == best_table_idx else ""))
             st.dataframe(df)
 
             numeric_cols = df.select_dtypes(include='number').columns.tolist()
             categorical_cols = df.select_dtypes(include='object').columns.tolist()
 
-            df['Index'] = df.index  # fallback
+            if 'Index' not in df.columns:
+                df['Index'] = df.index
 
             auto_chart, x_col, y_col = recommend_chart(df)
             if auto_chart:
                 st.info(f"📊 Recommended: {auto_chart} for Table {idx + 1}")
-
                 try:
                     st.subheader(f"Preview: {auto_chart}")
                     fig, ax = plt.subplots()
