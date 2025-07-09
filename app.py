@@ -9,17 +9,24 @@ from PIL import Image
 from collections import defaultdict
 
 st.set_page_config(page_title="PDF OCR Table Extractor", layout="wide")
-st.title("📸 Image-based PDF to Excel Converter (with OCR)")
+st.title("Pdf to Excel Converter")
 
 uploaded_file = st.file_uploader("Upload a scanned or layout-tricky PDF", type="pdf")
 buffer = None
 
 def preprocess_image(pil_image):
-    """Convert PIL image to OpenCV, grayscale, threshold."""
+    """Convert PIL image to pure black and white for better OCR."""
     img = np.array(pil_image)
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return thresh
+    
+    # Apply Otsu thresholding to binarize
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # Optional: Morphological clean-up to remove noise
+    kernel = np.ones((1, 1), np.uint8)
+    cleaned = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+
+    return cleaned
 
 def ocr_image_to_table(image):
     custom_config = r'--psm 6'  # Assume uniform block of text
@@ -52,8 +59,12 @@ if uploaded_file:
 
     for page_num, img in enumerate(images):
         st.markdown(f"---\n### 🖼 Page {page_num + 1}")
-        st.image(img, caption=f"Page {page_num + 1}", use_column_width=True)
+        st.image(img, caption=f"Original Page {page_num + 1}", use_column_width=True)
+
         processed = preprocess_image(img)
+        # Show preprocessed black & white version
+        st.image(processed, caption="🧼 Preprocessed (Black & White)", use_column_width=True, channels="GRAY")
+
         df = ocr_image_to_table(processed)
         if not df.empty:
             all_tables.append(df)
