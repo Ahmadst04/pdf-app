@@ -2,7 +2,7 @@ streamlit
 pandas
 pytesseract
 pdf2image
-opencv-python
+opencv-python-headless
 numpy
 Pillow
 xlsxwriter
