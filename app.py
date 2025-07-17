@@ -87,6 +87,3 @@ if uploaded_file:
 
     if buffer:
         st.download_button("📥 Download Excel", buffer, file_name="ocr_smart_data.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    if buffer:
-        st.download_button("📥 Download Excel", buffer, file_name="ocr_lines.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
