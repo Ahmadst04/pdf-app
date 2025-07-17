@@ -6,10 +6,10 @@ import io
 import cv2
 import numpy as np
 from PIL import Image
-import re
+from collections import defaultdict
 
 st.set_page_config(page_title="PDF OCR Table Extractor", layout="wide")
-st.title("📸 Image-based PDF to Excel Converter (with OCR + Smart Text & Numbers)")
+st.title("📸 Image-based PDF to Excel Converter (with OCR)")
 
 uploaded_file = st.file_uploader("Upload a scanned or layout-tricky PDF", type="pdf")
 buffer = None
@@ -18,45 +18,37 @@ def preprocess_image(pil_image):
     """Convert PIL image to pure black and white for better OCR."""
     img = np.array(pil_image)
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    
+    # Apply Otsu thresholding to binarize
     _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # Optional: Morphological clean-up to remove noise
     kernel = np.ones((1, 1), np.uint8)
     cleaned = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+
     return cleaned
 
-def is_numeric_string(s):
-    cleaned = s.replace(',', '').replace('RM', '').replace('$', '').strip()
-    return bool(re.match(r'^-?\d+(\.\d+)?$', cleaned))
-
-def convert_if_number(s):
-    try:
-        cleaned = s.replace(',', '').replace('RM', '').replace('$', '').strip()
-        return float(cleaned) if '.' in cleaned else int(cleaned)
-    except:
-        return s.strip()
-
 def ocr_image_to_table(image):
-    """Perform OCR and return lines with smart number + text detection."""
-    custom_config = r'--psm 6'
+    custom_config = r'--psm 6'  # Assume uniform block of text
     data = pytesseract.image_to_data(image, config=custom_config, output_type=pytesseract.Output.DATAFRAME)
     data = data.dropna().query('text.str.strip() != ""', engine='python')
 
+    # Group by line number
     grouped = data.groupby(['page_num', 'block_num', 'par_num', 'line_num'])
 
     rows = []
     for _, group in grouped:
-        words = group.sort_values('left')['text'].tolist()
-        parsed = [convert_if_number(word) for word in words]
-        line = " ".join([str(w) for w in parsed])
-        rows.append([line])
+        line = group.sort_values('left')['text'].tolist()
+        rows.append(line)
 
-    df = pd.DataFrame(rows, columns=["Full Text"])
+    df = pd.DataFrame(rows)
     return df
 
 def create_excel_file(tables):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         for idx, df in enumerate(tables):
-            df.to_excel(writer, sheet_name=f'Table{idx + 1}', index=False)
+            df.to_excel(writer, sheet_name=f'Table{idx + 1}', index=False, header=False)
     output.seek(0)
     return output
 
@@ -70,6 +62,7 @@ if uploaded_file:
         st.image(img, caption=f"Original Page {page_num + 1}", use_column_width=True)
 
         processed = preprocess_image(img)
+        # Show preprocessed black & white version
         st.image(processed, caption="🧼 Preprocessed (Black & White)", use_column_width=True, channels="GRAY")
 
         df = ocr_image_to_table(processed)
@@ -80,10 +73,10 @@ if uploaded_file:
             st.warning("⚠️ No text detected on this page.")
 
     if all_tables:
-        if st.button("📥 Generate Excel"):
+        if st.button("📥 Download as Excel"):
             buffer = create_excel_file(all_tables)
     else:
-        st.error("❌ No usable text extracted via OCR.")
+        st.error("❌ No usable tables extracted via OCR.")
 
     if buffer:
-        st.download_button("📥 Download Excel", buffer, file_name="ocr_smart_data.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("📥 Download Excel", buffer, file_name="ocr_tables.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
