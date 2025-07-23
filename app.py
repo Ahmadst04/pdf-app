@@ -6,7 +6,6 @@ import io
 import cv2
 import numpy as np
 from PIL import Image
-from collections import defaultdict
 
 st.set_page_config(page_title="PDF OCR Table Extractor", layout="wide")
 st.title("📸 Image-based PDF to Excel Converter (with OCR)")
@@ -28,27 +27,28 @@ def preprocess_image(pil_image):
 
     return cleaned
 
-def ocr_image_to_table(image):
-    custom_config = r'--psm 6'  # Assume uniform block of text
+def ocr_image_to_column(image):
+    """Run OCR and return data in a single column format."""
+    custom_config = r'--psm 6'
     data = pytesseract.image_to_data(image, config=custom_config, output_type=pytesseract.Output.DATAFRAME)
     data = data.dropna().query('text.str.strip() != ""', engine='python')
 
-    # Group by line number
     grouped = data.groupby(['page_num', 'block_num', 'par_num', 'line_num'])
 
-    rows = []
+    lines = []
     for _, group in grouped:
         line = group.sort_values('left')['text'].tolist()
-        rows.append(line)
+        joined_line = ' '.join(line)
+        lines.append([joined_line])  # Put each line in a list to form single column
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(lines, columns=["Extracted Text"])
     return df
 
 def create_excel_file(tables):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         for idx, df in enumerate(tables):
-            df.to_excel(writer, sheet_name=f'Table{idx + 1}', index=False, header=False)
+            df.to_excel(writer, sheet_name=f'Page{idx + 1}', index=False)
     output.seek(0)
     return output
 
@@ -62,10 +62,9 @@ if uploaded_file:
         st.image(img, caption=f"Original Page {page_num + 1}", use_column_width=True)
 
         processed = preprocess_image(img)
-        # Show preprocessed black & white version
         st.image(processed, caption="🧼 Preprocessed (Black & White)", use_column_width=True, channels="GRAY")
 
-        df = ocr_image_to_table(processed)
+        df = ocr_image_to_column(processed)
         if not df.empty:
             all_tables.append(df)
             st.dataframe(df)
@@ -76,8 +75,7 @@ if uploaded_file:
         if st.button("📥 Download as Excel"):
             buffer = create_excel_file(all_tables)
     else:
-        st.error("❌ No usable tables extracted via OCR.")
+        st.error("❌ No usable text extracted via OCR.")
 
     if buffer:
-        st.download_button("📥 Download Excel", buffer, file_name="ocr_tables.xlsx", mult, `11` for sparse text). This would require modifying the `custom_config` variable.
-""")
+        st.download_button("📥 Download Excel", buffer, file_name="ocr_text_single_column.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
