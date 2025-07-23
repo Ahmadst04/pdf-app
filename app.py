@@ -1,78 +1,85 @@
 import streamlit as st
 import pytesseract
-from pdf2image import convert_from_bytes
-from PIL import Image
+import fitz  # PyMuPDF
 import pandas as pd
 import io
 import cv2
 import numpy as np
+from PIL import Image
 
-st.set_page_config(page_title="PDF to Excel OCR", layout="centered")
+def extract_text_from_pdf(pdf_file):
+    pdf_document = fitz.open(stream=pdf_file.read(), filetype="pdf")
+    text_blocks = []
 
-st.title("📄 PDF to Excel OCR Converter")
+    for page_num in range(len(pdf_document)):
+        page = pdf_document.load_page(page_num)
+        pix = page.get_pixmap(dpi=300)
+        img_data = pix.tobytes("png")
+        image = Image.open(io.BytesIO(img_data))
 
-uploaded_file = st.file_uploader("Upload PDF file", type=["pdf"])
+        open_cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
 
-def ocr_image_to_table(image):
-    """Run OCR and return structured table while keeping full cell content in one Excel column."""
-    custom_config = r'--psm 6'
-    data = pytesseract.image_to_data(image, config=custom_config, output_type=pytesseract.Output.DATAFRAME)
-    data = data.dropna().query('text.str.strip() != ""', engine='python')
+        # Gunakan OCR
+        d = pytesseract.image_to_data(open_cv_image, output_type=pytesseract.Output.DICT)
 
-    # Group by line
-    grouped = data.groupby(['page_num', 'block_num', 'par_num', 'line_num'])
+        num_boxes = len(d['level'])
+        rows = []
+        current_row = []
+        last_top = None
 
-    rows = []
-    for _, group in grouped:
-        line = group.sort_values('left')
+        for i in range(num_boxes):
+            word = d['text'][i].strip()
+            if word:
+                top = d['top'][i]
+                if last_top is None:
+                    last_top = top
 
-        # Cluster words into columns based on X position
-        threshold = 50  # adjust spacing sensitivity here
-        columns = []
-        current_col = [line.iloc[0]['text']]
-        last_left = line.iloc[0]['left']
+                # Jika perbezaan posisi 'top' besar, anggap baris baru
+                if abs(top - last_top) > 10:
+                    if current_row:
+                        rows.append(current_row)
+                    current_row = [word]
+                    last_top = top
+                else:
+                    current_row.append(word)
 
-        for i in range(1, len(line)):
-            word = line.iloc[i]
-            if word['left'] - last_left > threshold:
-                columns.append(" ".join(current_col))
-                current_col = [word['text']]
-            else:
-                current_col.append(word['text'])
-            last_left = word['left']
+        if current_row:
+            rows.append(current_row)
 
-        columns.append(" ".join(current_col))  # append last column
-        rows.append(columns)
+        # Simpan setiap baris sebagai senarai dalam text_blocks
+        for row in rows:
+            text_blocks.append(row)
 
-    # Pad rows to same length
-    max_cols = max((len(r) for r in rows), default=0)
-    padded_rows = [r + [''] * (max_cols - len(r)) for r in rows]
+    return text_blocks
 
-    df = pd.DataFrame(padded_rows)
-    return df
+def format_to_excel_data(blocks):
+    formatted_data = []
+    for block in blocks:
+        formatted_data.append(block)
+    return formatted_data
 
-if uploaded_file is not None:
-    with st.spinner("Converting PDF to images..."):
-        images = convert_from_bytes(uploaded_file.read())
+def main():
+    st.title("📄 PDF Table OCR to Excel Converter")
+    uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
 
-    final_df = pd.DataFrame()
+    if uploaded_file is not None:
+        with st.spinner("Processing..."):
+            extracted_blocks = extract_text_from_pdf(uploaded_file)
+            data = format_to_excel_data(extracted_blocks)
+            df = pd.DataFrame(data)
 
-    with st.spinner("Running OCR and processing..."):
-        for page_num, image in enumerate(images):
-            # Convert to grayscale for better OCR accuracy
-            gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
-            pil_image = Image.fromarray(gray)
+            # Buat buffer untuk simpan Excel
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False, header=False)
 
-            df = ocr_image_to_table(pil_image)
-            final_df = pd.concat([final_df, df, pd.DataFrame([[]])], ignore_index=True)  # blank row between pages
+            st.success("Done extracting!")
+            st.download_button(
+                "📥 Download Excel",
+                buffer,
+                file_name="ocr_text_single_column.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
-    st.success("OCR completed and table extracted!")
-
-    st.dataframe(final_df)
-
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-        final_df.to_excel(writer, index=False, header=False)
-        writer.save()
-
-    st.download_button("📥 Download Excel", buffer, file_name="ocr_text_single_column.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+if __name__ == "__main__":
+    main()
