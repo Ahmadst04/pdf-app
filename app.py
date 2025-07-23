@@ -1,92 +1,78 @@
 import streamlit as st
-import pandas as pd
 import pytesseract
 from pdf2image import convert_from_bytes
+from PIL import Image
+import pandas as pd
 import io
 import cv2
 import numpy as np
-from PIL import Image
 
-st.set_page_config(page_title="PDF OCR Table Extractor", layout="wide")
-st.title("📸 Image-based PDF to Excel Converter (with OCR)")
+st.set_page_config(page_title="PDF to Excel OCR", layout="centered")
 
-uploaded_file = st.file_uploader("Upload a scanned or layout-tricky PDF", type="pdf")
-buffer = None
+st.title("📄 PDF to Excel OCR Converter")
 
-def preprocess_image(pil_image):
-    """Convert PIL image to pure black and white for better OCR."""
-    img = np.array(pil_image)
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    
-    # Apply Otsu thresholding to binarize
-    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    # Optional: Morphological clean-up to remove noise
-    kernel = np.ones((1, 1), np.uint8)
-    cleaned = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-
-    return cleaned
+uploaded_file = st.file_uploader("Upload PDF file", type=["pdf"])
 
 def ocr_image_to_table(image):
-    """Run OCR and return structured table with multiple columns."""
+    """Run OCR and return structured table while keeping full cell content in one Excel column."""
     custom_config = r'--psm 6'
     data = pytesseract.image_to_data(image, config=custom_config, output_type=pytesseract.Output.DATAFRAME)
     data = data.dropna().query('text.str.strip() != ""', engine='python')
 
-    # Group by line number to reconstruct rows
+    # Group by line
     grouped = data.groupby(['page_num', 'block_num', 'par_num', 'line_num'])
 
     rows = []
     for _, group in grouped:
-        # Sort words left to right
-        line_data = group.sort_values('left')['text'].tolist()
-        rows.append(line_data)
+        line = group.sort_values('left')
 
-    # Normalize number of columns in each row
+        # Cluster words into columns based on X position
+        threshold = 50  # adjust spacing sensitivity here
+        columns = []
+        current_col = [line.iloc[0]['text']]
+        last_left = line.iloc[0]['left']
+
+        for i in range(1, len(line)):
+            word = line.iloc[i]
+            if word['left'] - last_left > threshold:
+                columns.append(" ".join(current_col))
+                current_col = [word['text']]
+            else:
+                current_col.append(word['text'])
+            last_left = word['left']
+
+        columns.append(" ".join(current_col))  # append last column
+        rows.append(columns)
+
+    # Pad rows to same length
     max_cols = max((len(r) for r in rows), default=0)
     padded_rows = [r + [''] * (max_cols - len(r)) for r in rows]
 
     df = pd.DataFrame(padded_rows)
     return df
 
-def create_excel_file(tables):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        for idx, df in enumerate(tables):
-            df.to_excel(writer, sheet_name=f'Page{idx + 1}', index=False, header=False)
-    output.seek(0)
-    return output
+if uploaded_file is not None:
+    with st.spinner("Converting PDF to images..."):
+        images = convert_from_bytes(uploaded_file.read())
 
-if uploaded_file:
-    file_bytes = uploaded_file.read()
-    images = convert_from_bytes(file_bytes, dpi=300)
-    all_tables = []
+    final_df = pd.DataFrame()
 
-    for page_num, img in enumerate(images):
-        st.markdown(f"---\n### 🖼 Page {page_num + 1}")
-        st.image(img, caption=f"Original Page {page_num + 1}", use_column_width=True)
+    with st.spinner("Running OCR and processing..."):
+        for page_num, image in enumerate(images):
+            # Convert to grayscale for better OCR accuracy
+            gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+            pil_image = Image.fromarray(gray)
 
-        processed = preprocess_image(img)
-        st.image(processed, caption="🧼 Preprocessed (Black & White)", use_column_width=True, channels="GRAY")
+            df = ocr_image_to_table(pil_image)
+            final_df = pd.concat([final_df, df, pd.DataFrame([[]])], ignore_index=True)  # blank row between pages
 
-        df = ocr_image_to_table(processed)
-        if not df.empty:
-            all_tables.append(df)
-            st.dataframe(df)
-        else:
-            st.warning("⚠️ No text detected on this page.")
+    st.success("OCR completed and table extracted!")
 
-    if all_tables:
-        if st.button("📥 Download as Excel"):
-            buffer = create_excel_file(all_tables)
-    else:
-        st.error("❌ No usable text extracted via OCR.")
+    st.dataframe(final_df)
 
-    if buffer:
-        st.download_button(
-            "📥 Download Excel",
-            buffer,
-            file_name="ocr_table_output.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+        final_df.to_excel(writer, index=False, header=False)
+        writer.save()
 
+    st.download_button("📥 Download Excel", buffer, file_name="ocr_text_single_column.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
