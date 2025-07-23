@@ -27,12 +27,14 @@ def preprocess_image(pil_image):
 
     return cleaned
 
-def ocr_image_to_column(image):
-    """Run OCR and return data in a single column format."""
+def extract_table(image):
+    """Try to extract table data and return as single column."""
     custom_config = r'--psm 6'
     data = pytesseract.image_to_data(image, config=custom_config, output_type=pytesseract.Output.DATAFRAME)
     data = data.dropna().query('text.str.strip() != ""', engine='python')
 
+    # Simple logic to detect table-like structures
+    # For now, we'll just group by lines and join them into a single column
     grouped = data.groupby(['page_num', 'block_num', 'par_num', 'line_num'])
 
     lines = []
@@ -64,7 +66,7 @@ if uploaded_file:
         processed = preprocess_image(img)
         st.image(processed, caption="🧼 Preprocessed (Black & White)", use_column_width=True, channels="GRAY")
 
-        df = ocr_image_to_column(processed)
+        df = extract_table(processed)
         if not df.empty:
             all_tables.append(df)
             st.dataframe(df)
@@ -78,4 +80,4 @@ if uploaded_file:
         st.error("❌ No usable text extracted via OCR.")
 
     if buffer:
-        st.download_button("📥 Download Excel", buffer, file_name="ocr_text_single_column.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("📥 Download Excel", buffer, file_name="ocr_text_single_column.xlsx", mime="application/vnd.
