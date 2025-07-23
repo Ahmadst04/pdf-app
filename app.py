@@ -27,28 +27,33 @@ def preprocess_image(pil_image):
 
     return cleaned
 
-def ocr_image_to_column(image):
-    """Run OCR and return data in a single column format."""
+def ocr_image_to_table(image):
+    """Run OCR and return structured table with multiple columns."""
     custom_config = r'--psm 6'
     data = pytesseract.image_to_data(image, config=custom_config, output_type=pytesseract.Output.DATAFRAME)
     data = data.dropna().query('text.str.strip() != ""', engine='python')
 
+    # Group by line number to reconstruct rows
     grouped = data.groupby(['page_num', 'block_num', 'par_num', 'line_num'])
 
-    lines = []
+    rows = []
     for _, group in grouped:
-        line = group.sort_values('left')['text'].tolist()
-        joined_line = ' '.join(line)
-        lines.append([joined_line])  # Put each line in a list to form single column
+        # Sort words left to right
+        line_data = group.sort_values('left')['text'].tolist()
+        rows.append(line_data)
 
-    df = pd.DataFrame(lines, columns=["Extracted Text"])
+    # Normalize number of columns in each row
+    max_cols = max((len(r) for r in rows), default=0)
+    padded_rows = [r + [''] * (max_cols - len(r)) for r in rows]
+
+    df = pd.DataFrame(padded_rows)
     return df
 
 def create_excel_file(tables):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         for idx, df in enumerate(tables):
-            df.to_excel(writer, sheet_name=f'Page{idx + 1}', index=False)
+            df.to_excel(writer, sheet_name=f'Page{idx + 1}', index=False, header=False)
     output.seek(0)
     return output
 
@@ -64,7 +69,7 @@ if uploaded_file:
         processed = preprocess_image(img)
         st.image(processed, caption="🧼 Preprocessed (Black & White)", use_column_width=True, channels="GRAY")
 
-        df = ocr_image_to_column(processed)
+        df = ocr_image_to_table(processed)
         if not df.empty:
             all_tables.append(df)
             st.dataframe(df)
@@ -81,6 +86,7 @@ if uploaded_file:
         st.download_button(
             "📥 Download Excel",
             buffer,
-            file_name="ocr_text_single_column.xlsx",
+            file_name="ocr_table_output.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
