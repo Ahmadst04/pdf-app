@@ -1,8 +1,8 @@
 streamlit
-pandas
-numpy
 pytesseract
 pdf2image
 Pillow
 opencv-python-headless
+pandas
 xlsxwriter
+pymupdf
